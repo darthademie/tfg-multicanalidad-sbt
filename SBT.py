@@ -112,7 +112,7 @@ def ask_permanencia(message):
     markup.add(btn1, btn2)
 
     bot.send_message(message.chat.id, "Para adaptar la tarifa a tus necesidades, necesitamos configurar el contrato.")
-    bot.send_message(message.chat.id, "¿Prefieres libertad total sin ataduras, o comprometerte 12 meses a cambio de mantener estas condiciones ventajosas?", reply_markup=markup)
+    bot.send_message(message.chat.id, "¿Prefieres libertad total sin ataduras, o comprometerte 12 meses a cambio de obtener condiciones ventajosas a futuro?", reply_markup=markup)
 
 def ask_extras(message):
     markup = types.InlineKeyboardMarkup()
