@@ -106,8 +106,9 @@ def ask_confirmation_device(message):
 
 def ask_permanencia(message):
     markup = types.InlineKeyboardMarkup()
-    btn1 = types.InlineKeyboardButton('🔓 Sin permanencia', callback_data=f"{TipoOferta.TARIFA.value},pedir_permanencia,perm1,sin_permanencia")
-    btn2 = types.InlineKeyboardButton('🔒 12 Meses', callback_data=f"{TipoOferta.TARIFA.value},pedir_permanencia,perm2,12_meses")
+    # Modificado: Se envían textos naturales en el callback_data
+    btn1 = types.InlineKeyboardButton('🔓 Sin permanencia', callback_data=f"{TipoOferta.TARIFA.value},pedir_permanencia,perm1,Sin permanencia")
+    btn2 = types.InlineKeyboardButton('🔒 12 Meses', callback_data=f"{TipoOferta.TARIFA.value},pedir_permanencia,perm2,12 meses")
     markup.add(btn1, btn2)
 
     bot.send_message(message.chat.id, "Para adaptar la tarifa a tus necesidades, necesitamos configurar el contrato.")
@@ -115,8 +116,9 @@ def ask_permanencia(message):
 
 def ask_extras(message):
     markup = types.InlineKeyboardMarkup()
-    btn1 = types.InlineKeyboardButton('📱 MultiSIM', callback_data=f"{TipoOferta.TARIFA.value},pedir_extras,ext1,multisim")
-    btn2 = types.InlineKeyboardButton('🌍 Bono Internacional', callback_data=f"{TipoOferta.TARIFA.value},pedir_extras,ext2,bono_internacional")
+    # Modificado: Se envían textos naturales en el callback_data
+    btn1 = types.InlineKeyboardButton('📱 MultiSIM', callback_data=f"{TipoOferta.TARIFA.value},pedir_extras,ext1,MultiSIM")
+    btn2 = types.InlineKeyboardButton('🌍 Bono Internacional', callback_data=f"{TipoOferta.TARIFA.value},pedir_extras,ext2,Bono Internacional")
     markup.add(btn1, btn2)
 
     bot.send_message(message.chat.id, "¿Qué servicio adicional te gustaría añadir a tu tarifa de forma gratuita durante el primer mes?", reply_markup=markup)
@@ -248,13 +250,12 @@ def send_plan_data(chat_id):
         "user_id": chat_id,
         "type": "telegram",
         "order_type": "plan",
-        "plan_name": descripcionPedido[chat_id]["plan_name"], # Modificado de device_model a plan_name
+        "plan": descripcionPedido[chat_id]["plan"], 
         "permanencia": descripcionPedido[chat_id]["permanencia"],
         "extras": descripcionPedido[chat_id]["extras"],
         "fecha": {".sv": "timestamp"}
     }
     
-
     ref_tarifas = db.reference('cola_procesamiento/tarifas')
     print(datos_tarifa)
     ref_tarifas.push(datos_tarifa)
@@ -282,7 +283,10 @@ def send_plan_offer(oferta):
     pressed_buttons[chat_id] = {} 
     pressed_buttons[chat_id][TipoOferta.TARIFA.value] = {}
     descripcionPedido[chat_id] = {}
-    descripcionPedido[chat_id]["plan_name"] = oferta.get("name") # Modificado a plan_name
+    
+    # Modificado: Guardamos la clave pura ('plan') en lugar del nombre bonito para poder buscar en la app.
+    # Si la Cloud Function antigua no manda el target, usamos el name como mecanismo de seguridad.
+    descripcionPedido[chat_id]["plan"] = oferta.get("plan", oferta.get("name"))
 
     markup = types.InlineKeyboardMarkup()
     btn1 = types.InlineKeyboardButton('😊 Sí, ¡encantado!', callback_data=f"{TipoOferta.TARIFA.value},aceptar_oferta_tarifa,ofr_yes")
@@ -326,7 +330,6 @@ def procesar_y_marcar_oferta(oferta_id, oferta_data):
                 OfferValidator.validate_device_offer(oferta_data)
                 send_device_offer(oferta_data)
             elif tipo == "plan":
-                # Cambiado a validate_plan_offer
                 if hasattr(OfferValidator, 'validate_plan_offer'):
                     OfferValidator.validate_plan_offer(oferta_data) 
                 send_plan_offer(oferta_data)
