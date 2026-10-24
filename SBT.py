@@ -275,7 +275,7 @@ def send_device_offer(oferta):
     btn2 = types.InlineKeyboardButton('💭 No, quizá en otro momento', callback_data=f"{TipoOferta.DISPOSITIVO.value},aceptar_oferta_dispositivo,ofr_no")
     markup.add(btn1, btn2)
 
-    bot.send_message(chat_id, f'Por tu reciente subscripción a {oferta.get("origin")}, ¡¡consigue un {oferta.get("name")} con un {oferta.get("discount")}% de descuento!!')
+    bot.send_message(chat_id, f'Por tu reciente petición en {oferta.get("origin")}, ¡¡consigue un {oferta.get("name")} con un {oferta.get("discount")}% de descuento!!')
     bot.send_message(chat_id, '¿Te gustaría aprovechar esta oferta?', reply_markup=markup)
 
 
@@ -295,7 +295,7 @@ def send_plan_offer(oferta):
     btn2 = types.InlineKeyboardButton('💭 No, quizá en otro momento', callback_data=f"{TipoOferta.TARIFA.value},aceptar_oferta_tarifa,ofr_no")
     markup.add(btn1, btn2)
 
-    bot.send_message(chat_id, f'Por tu reciente compra de un {oferta.get("origin")}, ¡¡Tienes un {oferta.get("discount")}% de descuento en nuestro plan {oferta.get("name")}!!')
+    bot.send_message(chat_id, f'Por tu reciente compra en {oferta.get("origin")}, ¡¡Tienes un {oferta.get("discount")}% de descuento en nuestro plan {oferta.get("name")}!!')
     bot.send_message(chat_id, '¿Te gustaría aprovechar esta oferta?', reply_markup=markup)
 
 ##############################################################################
