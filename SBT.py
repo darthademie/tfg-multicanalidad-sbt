@@ -34,10 +34,12 @@ class TipoOferta(Enum):
 ####################### Inicialización Funciones Bot Telegram ################
 ##############################################################################
 
+script_dir = Path(__file__).parent
+
 # Token de acceso del bot proporcionado por BotFather
 TOKEN = None
 
-ruta_token = os.path.join('keys', 'telegram_token.txt')
+ruta_token = os.path.join(f'{script_dir}./keys', 'telegram_token.txt')
 
 try:
     with open(ruta_token, 'r') as archivo:
@@ -299,8 +301,6 @@ def send_plan_offer(oferta):
 ##############################################################################
 ####################### Arranque del listener Firebase #######################
 ##############################################################################
-
-script_dir = Path(__file__).parent
 
 cred = credentials.Certificate(f"{script_dir}./keys/serviceAccountKey.json")
 firebase_admin.initialize_app(cred, {

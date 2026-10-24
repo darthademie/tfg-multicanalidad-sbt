@@ -46,3 +46,4 @@ Thumbs.db
 keys/
 *-debug.log
 .runtimeconfig.json
+validators/__pycache__
