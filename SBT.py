@@ -258,7 +258,7 @@ def send_plan_data(chat_id):
         "fecha": {".sv": "timestamp"}
     }
     
-    ref_tarifas = db.reference('cola_procesamiento/tarifas')
+    ref_tarifas = db.reference('cola_procesamiento/pedidos')
     print(datos_tarifa)
     ref_tarifas.push(datos_tarifa)
 
