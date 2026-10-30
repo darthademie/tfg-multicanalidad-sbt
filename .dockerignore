@@ -1,0 +1,7 @@
+Dockerfile
+.git
+.dockerignore
+Dockerfile
+__pycache__
+validators/__pycache__
+keys/
