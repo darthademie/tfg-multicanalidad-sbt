@@ -39,26 +39,18 @@ pipeline {
                         
                         catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
                             sh """
-                            # Desactivamos temporalmente la parada por error de Jenkins
-                            # Así, si Bandit encuentra vulnerabilidades (exit code 1), nos deja imprimir el reporte
                             set +e 
                             
-                            # Redirigimos la salida estándar directamente al workspace de Jenkins (> bandit-report.txt)
-                            # 'pip install -q' silencia la instalación para que no ensucie el texto del reporte
-                            docker run --rm \
-                                -v \$(pwd):/app \
-                                -w /app \
-                                python:3.11-slim \
-                                bash -c "pip install -q bandit && bandit -r . -f txt" > bandit-report.txt
+                            # SOLUCIÓN DooD: Empaquetamos el código y lo enviamos por entrada estándar
+                            # al contenedor. Así evitamos el problema de directorios vacíos al usar volúmenes.
+                            tar -cf - . | docker run --rm -i python:3.11-slim bash -c "mkdir -p /app && cd /app && tar -xf - && pip install -q bandit && bandit -r . -f txt" > bandit-report.txt
                             
-                            # Guardamos el resultado del análisis (0 si está limpio, 1 si hay vulnerabilidades)
                             BANDIT_EXIT_CODE=\$?
                             
                             echo "=== RESULTADOS DEL ESCANEO DE BANDIT ==="
                             cat bandit-report.txt
                             echo "========================================"
                             
-                            # Devolvemos el código de salida original a Jenkins para que actúe en consecuencia
                             exit \$BANDIT_EXIT_CODE
                             """
                         }
