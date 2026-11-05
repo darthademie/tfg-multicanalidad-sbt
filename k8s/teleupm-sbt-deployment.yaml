@@ -17,7 +17,7 @@ spec:
     spec:
       containers:
       - name: sbt-worker
-        image: darthademie/tfg-multicanalidad-sbt:1.2
+        image: darthademie/tfg-multicanalidad-sbt:1.4
         imagePullPolicy: Always
         env:
         - name: PYTHONUNBUFFERED
