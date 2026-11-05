@@ -40,18 +40,23 @@ pipeline {
                         catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
                             sh """
                             # Usamos un contenedor efímero de Python para el escaneo
+                            # Generamos el reporte en formato texto (.txt)
                             docker run --rm \
                                 -v \$(pwd):/app \
                                 -w /app \
                                 python:3.11-slim \
-                                bash -c "pip install bandit bandit[html] && bandit -r . -f html -o bandit-report.html"
+                                bash -c "pip install bandit && bandit -r . -f txt -o bandit-report.txt"
+                            
+                            echo "=== RESULTADOS DEL ESCANEO DE BANDIT ==="
+                            cat bandit-report.txt
+                            echo "========================================"
                             """
                         }
                     }
                     post {
                         always {
                             echo 'Archivando reporte de seguridad de Bandit...'
-                            archiveArtifacts artifacts: 'bandit-report.html', allowEmptyArchive: true
+                            archiveArtifacts artifacts: 'bandit-report.txt', allowEmptyArchive: true
                         }
                     }
                 }
@@ -79,10 +84,10 @@ pipeline {
                             git config --global user.name "Jenkins CI"
                             
                             # 2. Modificar el archivo YAML del backend
-                            sed -i 's|image: darthademie/tfg-multicanalidad-sbt:.*|image: darthademie/tfg-multicanalidad-sbt:${TAG}|g' k8s/tfg-sbt-deployment.yaml
+                            sed -i 's|image: darthademie/tfg-multicanalidad-sbt:.*|image: darthademie/tfg-multicanalidad-sbt:${TAG}|g' k8s/teleupm-sbt-deployment.yaml
                             
                             # 3. Hacer Commit y Push
-                            git add k8s/tfg-sbt-deployment.yaml
+                            git add k8s/teleupm-sbt-deployment.yaml
                             git commit -m "gitops: Despliegue automático de versión ${TAG} [skip ci]"
                             git push https://\$GIT_USER:\$GIT_PASS@github.com/darthademie/tfg-multicanalidad-sbt.git HEAD:main
                             """
