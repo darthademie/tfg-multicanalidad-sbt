@@ -39,17 +39,27 @@ pipeline {
                         
                         catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
                             sh """
-                            # Usamos un contenedor efímero de Python para el escaneo
-                            # Generamos el reporte en formato texto (.txt)
+                            # Desactivamos temporalmente la parada por error de Jenkins
+                            # Así, si Bandit encuentra vulnerabilidades (exit code 1), nos deja imprimir el reporte
+                            set +e 
+                            
+                            # Redirigimos la salida estándar directamente al workspace de Jenkins (> bandit-report.txt)
+                            # 'pip install -q' silencia la instalación para que no ensucie el texto del reporte
                             docker run --rm \
                                 -v \$(pwd):/app \
                                 -w /app \
                                 python:3.11-slim \
-                                bash -c "pip install bandit && bandit -r . -f txt -o bandit-report.txt"
+                                bash -c "pip install -q bandit && bandit -r . -f txt" > bandit-report.txt
+                            
+                            # Guardamos el resultado del análisis (0 si está limpio, 1 si hay vulnerabilidades)
+                            BANDIT_EXIT_CODE=\$?
                             
                             echo "=== RESULTADOS DEL ESCANEO DE BANDIT ==="
                             cat bandit-report.txt
                             echo "========================================"
+                            
+                            # Devolvemos el código de salida original a Jenkins para que actúe en consecuencia
+                            exit \$BANDIT_EXIT_CODE
                             """
                         }
                     }
