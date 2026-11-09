@@ -22,13 +22,27 @@ pipeline {
         stage('Pipeline de Integración Continua (CI)') {
             when {
                 expression {
-                    // Extraemos el mensaje y devolvemos 'true' SOLO si NO contiene la etiqueta
+                    // 1. Comprobamos si el pipeline se ha lanzado manualmente (por un usuario dándole al botón)
+                    def isManualTrigger = currentBuild.rawBuild.getCauses().any { cause ->
+                        cause instanceof hudson.model.Cause.UserIdCause
+                    }
+                    
+                    // Si se ha lanzado a mano, saltamos la comprobación y permitimos la ejecución
+                    if (isManualTrigger) {
+                        echo "[INFO] Compilación lanzada MANUALMENTE. Ignorando comprobación de '[skip ci]'."
+                        return true
+                    }
+
+                    // 2. Si NO ha sido manual (ej: viene de un Webhook de GitHub), comprobamos el commit
                     def commitMessage = sh(script: 'git log -1 --pretty=%B', returnStdout: true).trim()
                     if (commitMessage.contains('[skip ci]')) {
-                        echo "Se ha detectado '[skip ci]'. Abortando ejecución para evitar bucle infinito."
+                        echo "Se ha detectado '[skip ci]' desde un evento automático. Abortando ejecución."
                         currentBuild.result = 'ABORTED'
+                        return false
                     }
-                    return !commitMessage.contains('[skip ci]')
+                    
+                    // Si no es manual y no tiene '[skip ci]', permitimos la ejecución
+                    return true
                 }
             }
 
