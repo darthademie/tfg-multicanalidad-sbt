@@ -214,12 +214,13 @@ def callback_query_device(call):
             return
 
         if boton == "ofr_yes":
+            enviar_evento_analytics(chat_id, "oferta_dispositivo_aceptada", "aceptada_inicio")
             bot.send_message(chat_id, "¡Buena decisión! Comenzemos el proceso de envío")
             ask_rom(call.message)
             
         elif boton == "ofr_no":
             # JOURNEY: Cancelación de dispositivo en la primera pregunta
-            enviar_evento_analytics(chat_id, "oferta_dispositivo_cancelada", "cancelada_al_inicio")
+            enviar_evento_analytics(chat_id, "oferta_dispositivo_cancelada", "cancelada_inicio")
             bot.send_message(chat_id, "¡Sin problema! Te mantendremos informado de las últimas ofertas que te puedan resultar interesantes 😉")
             
         elif (boton == "alm1") | (boton == "alm2"):
@@ -242,7 +243,7 @@ def callback_query_device(call):
             
         elif (boton == "offer_no_confirm"):
             # JOURNEY: Cancelación de dispositivo al final del proceso
-            enviar_evento_analytics(chat_id, "oferta_dispositivo_cancelada", "cancelada_al_final")
+            enviar_evento_analytics(chat_id, "oferta_dispositivo_cancelada", "cancelada_final")
             del descripcionPedido[chat_id]
             del pressed_buttons[chat_id]
             bot.send_message(chat_id, "¡Sin problema! Te mantendremos informado de las últimas ofertas relevantes 😄")
@@ -271,12 +272,13 @@ def callback_query_plan(call):
             return
 
         if boton == "ofr_yes":
+            enviar_evento_analytics(chat_id, "oferta_tarifa_aceptada", "aceptada_inicio")
             bot.send_message(chat_id, "¡Buena decisión! Comenzemos el proceso de personalización de tu tarifa.")
             ask_permanencia(call.message)
             
         elif boton == "ofr_no":
             # JOURNEY: Cancelación de tarifa en la primera pregunta
-            enviar_evento_analytics(chat_id, "oferta_tarifa_cancelada", "cancelada_al_inicio")
+            enviar_evento_analytics(chat_id, "oferta_tarifa_cancelada", "cancelada_inicio")
             bot.send_message(chat_id, "¡Sin problema! Te mantendremos informado de las últimas ofertas que te puedan resultar interesantes 😉")
             
         elif (boton == "perm1") | (boton == "perm2"):
@@ -299,7 +301,7 @@ def callback_query_plan(call):
             
         elif (boton == "offer_no_confirm"):
             # JOURNEY: Cancelación de tarifa al final del proceso
-            enviar_evento_analytics(chat_id, "oferta_tarifa_cancelada", "cancelada_al_final")
+            enviar_evento_analytics(chat_id, "oferta_tarifa_cancelada", "cancelada_final")
             del descripcionPedido[chat_id]
             del pressed_buttons[chat_id]
             bot.send_message(chat_id, "Operación cancelada. Si cambias de opinión, ¡estaremos por aquí! 😄")
