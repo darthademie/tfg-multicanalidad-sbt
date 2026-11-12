@@ -6,10 +6,12 @@ from firebase_admin import credentials, db
 import telebot
 from telebot import types
 
-# Llamadas al sistema
+# Llamadas al sistema e integraciones externas
 import os
 import sys
 import signal
+import requests
+import json
 
 # Gestión de ficheros
 from pathlib import Path
@@ -64,6 +66,65 @@ descripcionPedido = {}
 # Inicializa el bot con el token
 bot = telebot.TeleBot(TOKEN)
 
+##############################################################################
+####################### FUNCIONES ANALYTICS GA4 ##############################
+##############################################################################
+
+def enviar_evento_analytics(client_id, event_name, motivo):
+    """
+    Lee variables de entorno para usar Google Analytics 4 (GA4).
+    """
+    api_secret = os.getenv("GA_API_SECRET")
+    measurement_id = os.getenv("GA_MEASUREMENT_ID")
+
+    if not api_secret or not measurement_id:
+        print("[WARN] Credenciales GA4 no encontradas en el entorno. Omitiendo analítica.")
+        return
+
+    # 1. Cruce con Firebase RTDB para obtener el firebase_uid real
+    try:
+        # Buscamos en el nodo 'telegram' aquel registro cuyo valor coincida con nuestro chat_id
+        ref_telegram = db.reference('telegram')
+        resultados = ref_telegram.order_by_value().equal_to(client_id).get()
+        
+        if not resultados:
+            print(f"[WARN] No se encontró el UID de Firebase para el chat_id {client_id}. Se usará el chat_id temporalmente.")
+            firebase_uid = str(client_id)
+        else:
+            # 'resultados' devuelve un dict tipo {'xSGvc0KtDdZuUq2VN53czvr0UjG2': 5999016166}
+            # Extraemos la primera clave encontrada, que es el UID
+            firebase_uid = list(resultados.keys())[0]
+            
+    except Exception as e:
+        print(f"[ERROR] Fallo al consultar el nodo 'telegram' en RTDB: {e}")
+        firebase_uid = str(client_id) # Fallback de seguridad para no perder el evento
+
+    # 2. Envío a GA4
+    url = f"https://www.google-analytics.com/mp/collect?measurement_id={measurement_id}&api_secret={api_secret}"
+
+    payload = {
+        "client_id": firebase_uid, # Usamos el UID unificado extraído de la BBDD
+        "user_id": firebase_uid,
+        "events": [{
+            "name": event_name,
+            "params": {
+                "motivo": motivo,
+                "plataforma": "telegram"
+            }
+        }]
+    }
+
+    try:
+        # Añadimos un timeout corto para no bloquear el hilo del bot si GA4 tarda
+        response = requests.post(url, data=json.dumps(payload), timeout=3)
+        # GA4 suele devolver 204 No Content cuando el envío es correcto
+        if response.status_code in [200, 204]:
+            print(f"[INFO] Analítica '{event_name}' ({motivo}) enviada a GA4 con UID {firebase_uid}.")
+        else:
+            print(f"[WARN] Error HTTP de GA4: {response.status_code} - {response.text}")
+    except Exception as e:
+        print(f"[ERROR] Excepción de red enviando a GA4: {e}")
+
 # Maneja el comando '/start'
 @bot.message_handler(commands=['start'])
 def start(message):
@@ -108,7 +169,6 @@ def ask_confirmation_device(message):
 
 def ask_permanencia(message):
     markup = types.InlineKeyboardMarkup()
-    # Modificado: Se envían textos naturales en el callback_data
     btn1 = types.InlineKeyboardButton('🔓 Sin permanencia', callback_data=f"{TipoOferta.TARIFA.value},pedir_permanencia,perm1,Sin permanencia")
     btn2 = types.InlineKeyboardButton('🔒 12 Meses', callback_data=f"{TipoOferta.TARIFA.value},pedir_permanencia,perm2,12 meses")
     markup.add(btn1, btn2)
@@ -118,7 +178,6 @@ def ask_permanencia(message):
 
 def ask_extras(message):
     markup = types.InlineKeyboardMarkup()
-    # Modificado: Se envían textos naturales en el callback_data
     btn1 = types.InlineKeyboardButton('📱 MultiSIM', callback_data=f"{TipoOferta.TARIFA.value},pedir_extras,ext1,MultiSIM")
     btn2 = types.InlineKeyboardButton('🌍 Bono Internacional', callback_data=f"{TipoOferta.TARIFA.value},pedir_extras,ext2,Bono Internacional")
     markup.add(btn1, btn2)
@@ -157,22 +216,33 @@ def callback_query_device(call):
         if boton == "ofr_yes":
             bot.send_message(chat_id, "¡Buena decisión! Comenzemos el proceso de envío")
             ask_rom(call.message)
+            
         elif boton == "ofr_no":
+            # JOURNEY: Cancelación de dispositivo en la primera pregunta
+            enviar_evento_analytics(chat_id, "oferta_dispositivo_cancelada", "cancelada_al_inicio")
             bot.send_message(chat_id, "¡Sin problema! Te mantendremos informado de las últimas ofertas que te puedan resultar interesantes 😉")
+            
         elif (boton == "alm1") | (boton == "alm2"):
             descripcionPedido[chat_id]["storage"] = infoBoton
             bot.send_message(chat_id, "¡Estupendo!")
             ask_color(call.message)
+            
         elif (boton == "color1") | (boton == "color2"):
             descripcionPedido[chat_id]["color"] = infoBoton
             bot.send_message(chat_id, "¡Genial! Buena elección 😉")
             ask_confirmation_device(call.message)
+            
         elif (boton == "offer_confirm"):
+            # JOURNEY: Aceptación final del dispositivo
+            enviar_evento_analytics(chat_id, "oferta_dispositivo_aceptada", "aceptada_final")
             send_device_data(chat_id)
             del descripcionPedido[chat_id]
             del pressed_buttons[chat_id]
             bot.send_message(chat_id, "¡Perfecto! Tu pedido será enviado en breve a la dirección que proporcionaste a Tele UPM. Muchas gracias por confiar en nosotros 😄")
+            
         elif (boton == "offer_no_confirm"):
+            # JOURNEY: Cancelación de dispositivo al final del proceso
+            enviar_evento_analytics(chat_id, "oferta_dispositivo_cancelada", "cancelada_al_final")
             del descripcionPedido[chat_id]
             del pressed_buttons[chat_id]
             bot.send_message(chat_id, "¡Sin problema! Te mantendremos informado de las últimas ofertas relevantes 😄")
@@ -203,22 +273,33 @@ def callback_query_plan(call):
         if boton == "ofr_yes":
             bot.send_message(chat_id, "¡Buena decisión! Comenzemos el proceso de personalización de tu tarifa.")
             ask_permanencia(call.message)
+            
         elif boton == "ofr_no":
+            # JOURNEY: Cancelación de tarifa en la primera pregunta
+            enviar_evento_analytics(chat_id, "oferta_tarifa_cancelada", "cancelada_al_inicio")
             bot.send_message(chat_id, "¡Sin problema! Te mantendremos informado de las últimas ofertas que te puedan resultar interesantes 😉")
+            
         elif (boton == "perm1") | (boton == "perm2"):
             descripcionPedido[chat_id]["permanencia"] = infoBoton
             bot.send_message(chat_id, "¡Anotado!")
             ask_extras(call.message)
+            
         elif (boton == "ext1") | (boton == "ext2"):
             descripcionPedido[chat_id]["extras"] = infoBoton
             bot.send_message(chat_id, "¡Genial! Una buena decisión 😉")
             ask_confirmation_plan(call.message)
+            
         elif (boton == "offer_confirm"):
+            # JOURNEY: Aceptación final de la tarifa
+            enviar_evento_analytics(chat_id, "oferta_tarifa_aceptada", "aceptada_final")
             send_plan_data(chat_id)
             del descripcionPedido[chat_id]
             del pressed_buttons[chat_id]
             bot.send_message(chat_id, "¡Perfecto! Tu nueva tarifa ha sido procesada y se activará en tu línea en los próximos minutos. ¡A disfrutar! 🎉")
+            
         elif (boton == "offer_no_confirm"):
+            # JOURNEY: Cancelación de tarifa al final del proceso
+            enviar_evento_analytics(chat_id, "oferta_tarifa_cancelada", "cancelada_al_final")
             del descripcionPedido[chat_id]
             del pressed_buttons[chat_id]
             bot.send_message(chat_id, "Operación cancelada. Si cambias de opinión, ¡estaremos por aquí! 😄")
@@ -277,7 +358,6 @@ def send_device_offer(oferta):
 
     bot.send_message(chat_id, f'Por tu reciente petición en {oferta.get("origin")}, ¡¡consigue un {oferta.get("name")} con un {oferta.get("discount")}% de descuento!!')
     bot.send_message(chat_id, '¿Te gustaría aprovechar esta oferta?', reply_markup=markup)
-
 
 def send_plan_offer(oferta):
     chat_id = oferta.get("chat_id")
