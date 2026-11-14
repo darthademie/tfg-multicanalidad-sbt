@@ -67,10 +67,46 @@ descripcionPedido = {}
 bot = telebot.TeleBot(TOKEN)
 
 ##############################################################################
-####################### FUNCIONES ANALYTICS GA4 ##############################
+####################### FUNCIONES ANALYTICS Y EMAILS #########################
 ##############################################################################
 
-def enviar_evento_analytics(client_id, event_name, motivo):
+def get_firebase_uid(chat_id):
+    """
+    Busca el UID de Firebase asociado a un chat_id de Telegram en la RTDB.
+    """
+    try:
+        ref_telegram = db.reference('telegram')
+        resultados = ref_telegram.order_by_value().equal_to(chat_id).get()
+        
+        if resultados:
+            # Extraemos la primera clave encontrada, que es el UID
+            return list(resultados.keys())[0]
+            
+    except Exception as e:
+        print(f"[ERROR] Fallo al consultar el nodo 'telegram' en RTDB: {e}")
+    
+    return str(chat_id) # Fallback
+
+def queue_email(chat_id, code_event):
+    """
+    Envía un evento a la cola de procesamiento de emails en Firebase RTDB.
+    Esto será recogido por n8n para enviar el correo correspondiente.
+    """
+    uid_fb = get_firebase_uid(chat_id)
+    
+    email_data = {
+        "uid_fb": uid_fb,
+        "code": code_event
+    }
+    
+    try:
+        ref_emails = db.reference('cola_procesamiento/emails')
+        ref_emails.push(email_data)
+        print(f"[INFO] Evento de email '{code_event}' encolado para el usuario {uid_fb}.")
+    except Exception as e:
+        print(f"[ERROR] Error al encolar email en Firebase: {e}")
+
+def send_analytics_event(client_id, event_name, motivo):
     """
     Lee variables de entorno para usar Google Analytics 4 (GA4).
     """
@@ -81,29 +117,13 @@ def enviar_evento_analytics(client_id, event_name, motivo):
         print("[WARN] Credenciales GA4 no encontradas en el entorno. Omitiendo analítica.")
         return
 
-    # 1. Cruce con Firebase RTDB para obtener el firebase_uid real
-    try:
-        # Buscamos en el nodo 'telegram' aquel registro cuyo valor coincida con nuestro chat_id
-        ref_telegram = db.reference('telegram')
-        resultados = ref_telegram.order_by_value().equal_to(client_id).get()
-        
-        if not resultados:
-            print(f"[WARN] No se encontró el UID de Firebase para el chat_id {client_id}. Se usará el chat_id temporalmente.")
-            firebase_uid = str(client_id)
-        else:
-            # 'resultados' devuelve un dict tipo {'xSGvc0KtDdZuUq2VN53czvr0UjG2': 5999016166}
-            # Extraemos la primera clave encontrada, que es el UID
-            firebase_uid = list(resultados.keys())[0]
-            
-    except Exception as e:
-        print(f"[ERROR] Fallo al consultar el nodo 'telegram' en RTDB: {e}")
-        firebase_uid = str(client_id) # Fallback de seguridad para no perder el evento
+    firebase_uid = get_firebase_uid(client_id)
 
     # 2. Envío a GA4
     url = f"https://www.google-analytics.com/mp/collect?measurement_id={measurement_id}&api_secret={api_secret}"
 
     payload = {
-        "client_id": firebase_uid, # Usamos el UID unificado extraído de la BBDD
+        "client_id": firebase_uid, 
         "user_id": firebase_uid,
         "events": [{
             "name": event_name,
@@ -121,7 +141,7 @@ def enviar_evento_analytics(client_id, event_name, motivo):
         if response.status_code in [200, 204]:
             print(f"[INFO] Analítica '{event_name}' ({motivo}) enviada a GA4 con UID {firebase_uid}.")
         else:
-            print(f"[WARN] Error HTTP de GA4: {response.status_code} - {response.text}")
+            print(f"[WARN] Error HTTP de GA4: {response.status_code}\n{response.text}")
     except Exception as e:
         print(f"[ERROR] Excepción de red enviando a GA4: {e}")
 
@@ -214,13 +234,14 @@ def callback_query_device(call):
             return
 
         if boton == "ofr_yes":
-            enviar_evento_analytics(chat_id, "oferta_dispositivo_aceptada", "aceptada_inicio")
+            send_analytics_event(chat_id, "oferta_dispositivo_aceptada", "aceptada_inicio")
             bot.send_message(chat_id, "¡Buena decisión! Comenzemos el proceso de envío")
             ask_rom(call.message)
             
         elif boton == "ofr_no":
             # JOURNEY: Cancelación de dispositivo en la primera pregunta
-            enviar_evento_analytics(chat_id, "oferta_dispositivo_cancelada", "cancelada_inicio")
+            send_analytics_event(chat_id, "oferta_dispositivo_cancelada", "cancelada_inicio")
+            queue_email(chat_id, "oferta_rechazada_inicio") # NUEVO: Trigger de email
             bot.send_message(chat_id, "¡Sin problema! Te mantendremos informado de las últimas ofertas que te puedan resultar interesantes 😉")
             
         elif (boton == "alm1") | (boton == "alm2"):
@@ -235,7 +256,7 @@ def callback_query_device(call):
             
         elif (boton == "offer_confirm"):
             # JOURNEY: Aceptación final del dispositivo
-            enviar_evento_analytics(chat_id, "oferta_dispositivo_aceptada", "aceptada_final")
+            send_analytics_event(chat_id, "oferta_dispositivo_aceptada", "aceptada_final")
             send_device_data(chat_id)
             del descripcionPedido[chat_id]
             del pressed_buttons[chat_id]
@@ -243,7 +264,8 @@ def callback_query_device(call):
             
         elif (boton == "offer_no_confirm"):
             # JOURNEY: Cancelación de dispositivo al final del proceso
-            enviar_evento_analytics(chat_id, "oferta_dispositivo_cancelada", "cancelada_final")
+            send_analytics_event(chat_id, "oferta_dispositivo_cancelada", "cancelada_final")
+            queue_email(chat_id, "oferta_cancelada_final") # NUEVO: Trigger de email
             del descripcionPedido[chat_id]
             del pressed_buttons[chat_id]
             bot.send_message(chat_id, "¡Sin problema! Te mantendremos informado de las últimas ofertas relevantes 😄")
@@ -272,13 +294,14 @@ def callback_query_plan(call):
             return
 
         if boton == "ofr_yes":
-            enviar_evento_analytics(chat_id, "oferta_tarifa_aceptada", "aceptada_inicio")
+            send_analytics_event(chat_id, "oferta_tarifa_aceptada", "aceptada_inicio")
             bot.send_message(chat_id, "¡Buena decisión! Comenzemos el proceso de personalización de tu tarifa.")
             ask_permanencia(call.message)
             
         elif boton == "ofr_no":
             # JOURNEY: Cancelación de tarifa en la primera pregunta
-            enviar_evento_analytics(chat_id, "oferta_tarifa_cancelada", "cancelada_inicio")
+            send_analytics_event(chat_id, "oferta_tarifa_cancelada", "cancelada_inicio")
+            queue_email(chat_id, "oferta_rechazada_inicio") # NUEVO: Trigger de email
             bot.send_message(chat_id, "¡Sin problema! Te mantendremos informado de las últimas ofertas que te puedan resultar interesantes 😉")
             
         elif (boton == "perm1") | (boton == "perm2"):
@@ -293,7 +316,7 @@ def callback_query_plan(call):
             
         elif (boton == "offer_confirm"):
             # JOURNEY: Aceptación final de la tarifa
-            enviar_evento_analytics(chat_id, "oferta_tarifa_aceptada", "aceptada_final")
+            send_analytics_event(chat_id, "oferta_tarifa_aceptada", "aceptada_final")
             send_plan_data(chat_id)
             del descripcionPedido[chat_id]
             del pressed_buttons[chat_id]
@@ -301,7 +324,8 @@ def callback_query_plan(call):
             
         elif (boton == "offer_no_confirm"):
             # JOURNEY: Cancelación de tarifa al final del proceso
-            enviar_evento_analytics(chat_id, "oferta_tarifa_cancelada", "cancelada_final")
+            send_analytics_event(chat_id, "oferta_tarifa_cancelada", "cancelada_final")
+            queue_email(chat_id, "oferta_cancelada_final") # NUEVO: Trigger de email
             del descripcionPedido[chat_id]
             del pressed_buttons[chat_id]
             bot.send_message(chat_id, "Operación cancelada. Si cambias de opinión, ¡estaremos por aquí! 😄")
