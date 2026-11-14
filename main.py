@@ -392,7 +392,7 @@ def send_plan_offer(oferta):
     pressed_buttons[chat_id][TipoOferta.TARIFA.value] = {}
     descripcionPedido[chat_id] = {}
     
-    # Modificado: Guardamos la clave pura ('plan') en lugar del nombre bonito para poder buscar en la app.
+    # Modificado: Guardamos la clave pura ('plan') para poder buscar en la app.
     # Si la Cloud Function antigua no manda el target, usamos el name como mecanismo de seguridad.
     descripcionPedido[chat_id]["plan"] = oferta.get("plan", oferta.get("name"))
 
@@ -436,8 +436,7 @@ def procesar_y_marcar_oferta(oferta_id, oferta_data):
                 OfferValidator.validate_device_offer(oferta_data)
                 send_device_offer(oferta_data)
             elif tipo == "plan":
-                if hasattr(OfferValidator, 'validate_plan_offer'):
-                    OfferValidator.validate_plan_offer(oferta_data) 
+                OfferValidator.validate_plan_offer(oferta_data) 
                 send_plan_offer(oferta_data)
                 
             db.reference(f'ofertas/{oferta_id}').update({
