@@ -12,6 +12,8 @@ import sys
 import signal
 import requests
 import json
+import threading
+from collections import deque
 
 # Gestión de ficheros
 from pathlib import Path
@@ -62,6 +64,15 @@ pressed_buttons = {}
 
 # Inicializamos un diccionario que contenga los detalles del pedido
 descripcionPedido = {}
+
+# Oferta que se está atendiendo en cada chat: {chat_id: oferta_id}
+oferta_activa = {}
+
+# Ofertas a la espera de que el cliente termine la que tiene activa: {chat_id: deque[(oferta_id, oferta_data)]}
+ofertas_pendientes = {}
+
+# Las ofertas llegan desde el hilo del listener de Firebase y se cierran desde los hilos de Telegram
+lock_ofertas = threading.Lock()
 
 # Inicializa el bot con el token
 bot = telebot.TeleBot(TOKEN)
@@ -243,7 +254,9 @@ def callback_query_device(call):
             send_analytics_event(chat_id, "oferta_dispositivo_cancelada", "cancelada_inicio")
             queue_email(chat_id, "oferta_rechazada_inicio") # NUEVO: Trigger de email
             bot.send_message(chat_id, "¡Sin problema! Te mantendremos informado de las últimas ofertas que te puedan resultar interesantes 😉")
-            
+            finalizar_oferta(chat_id)
+            return
+
         elif (boton == "alm1") | (boton == "alm2"):
             descripcionPedido[chat_id]["storage"] = infoBoton
             bot.send_message(chat_id, "¡Estupendo!")
@@ -258,18 +271,18 @@ def callback_query_device(call):
             # JOURNEY: Aceptación final del dispositivo
             send_analytics_event(chat_id, "oferta_dispositivo_aceptada", "aceptada_final")
             send_device_data(chat_id)
-            del descripcionPedido[chat_id]
-            del pressed_buttons[chat_id]
             bot.send_message(chat_id, "¡Perfecto! Tu pedido será enviado en breve a la dirección que proporcionaste a Tele UPM. Muchas gracias por confiar en nosotros 😄")
-            
+            finalizar_oferta(chat_id)
+            return
+
         elif (boton == "offer_no_confirm"):
             # JOURNEY: Cancelación de dispositivo al final del proceso
             send_analytics_event(chat_id, "oferta_dispositivo_cancelada", "cancelada_final")
             queue_email(chat_id, "oferta_cancelada_final") # NUEVO: Trigger de email
-            del descripcionPedido[chat_id]
-            del pressed_buttons[chat_id]
             bot.send_message(chat_id, "¡Sin problema! Te mantendremos informado de las últimas ofertas relevantes 😄")
-            
+            finalizar_oferta(chat_id)
+            return
+
         if ( grupoBotones != "confirmar_pedido" ):
             pressed_buttons[chat_id][TipoOferta.DISPOSITIVO.value][grupoBotones] = True
 
@@ -303,7 +316,9 @@ def callback_query_plan(call):
             send_analytics_event(chat_id, "oferta_tarifa_cancelada", "cancelada_inicio")
             queue_email(chat_id, "oferta_rechazada_inicio") # NUEVO: Trigger de email
             bot.send_message(chat_id, "¡Sin problema! Te mantendremos informado de las últimas ofertas que te puedan resultar interesantes 😉")
-            
+            finalizar_oferta(chat_id)
+            return
+
         elif (boton == "perm1") | (boton == "perm2"):
             descripcionPedido[chat_id]["permanencia"] = infoBoton
             bot.send_message(chat_id, "¡Anotado!")
@@ -318,17 +333,17 @@ def callback_query_plan(call):
             # JOURNEY: Aceptación final de la tarifa
             send_analytics_event(chat_id, "oferta_tarifa_aceptada", "aceptada_final")
             send_plan_data(chat_id)
-            del descripcionPedido[chat_id]
-            del pressed_buttons[chat_id]
             bot.send_message(chat_id, "¡Perfecto! Tu nueva tarifa ha sido procesada y se activará en tu línea en los próximos minutos. ¡A disfrutar! 🎉")
-            
+            finalizar_oferta(chat_id)
+            return
+
         elif (boton == "offer_no_confirm"):
             # JOURNEY: Cancelación de tarifa al final del proceso
             send_analytics_event(chat_id, "oferta_tarifa_cancelada", "cancelada_final")
             queue_email(chat_id, "oferta_cancelada_final") # NUEVO: Trigger de email
-            del descripcionPedido[chat_id]
-            del pressed_buttons[chat_id]
             bot.send_message(chat_id, "Operación cancelada. Si cambias de opinión, ¡estaremos por aquí! 😄")
+            finalizar_oferta(chat_id)
+            return
 
         if ( grupoBotones != "confirmar_pedido" ):
             pressed_buttons[chat_id][TipoOferta.TARIFA.value][grupoBotones] = True
@@ -426,26 +441,81 @@ def subscription_event(event):
             procesar_y_marcar_oferta(oferta_id, oferta_data)
 
 def procesar_y_marcar_oferta(oferta_id, oferta_data):
+    """
+    Recibe una oferta del nodo 'ofertas'. La oferta NO se marca como procesada al
+    enviarla, sino cuando el cliente termina la conversación (finalizar_oferta).
+    Así, si el backend se reinicia a mitad de una conversación, al volver a
+    arrancar el listener recoge las ofertas con processed = false y las reenvía.
+    """
     if not oferta_data or not isinstance(oferta_data, dict):
         return
-        
-    if not oferta_data.get("processed"):
+
+    if oferta_data.get("processed"):
+        return
+
+    tipo = oferta_data.get("type")
+    try:
+        if tipo == "device":
+            OfferValidator.validate_device_offer(oferta_data)
+        elif tipo == "plan":
+            OfferValidator.validate_plan_offer(oferta_data)
+        else:
+            raise ValueError(f"tipo de oferta desconocido: {tipo}")
+    except (ValueError, TypeError) as e:
+        print(f"[ERROR] Oferta {oferta_id} descartada. Motivo: {e}")
+        return
+
+    chat_id = oferta_data.get("chat_id")
+
+    with lock_ofertas:
+        pendientes = ofertas_pendientes.setdefault(chat_id, deque())
+
+        # Evita duplicados si el listener vuelve a notificar la misma oferta
+        if oferta_activa.get(chat_id) == oferta_id or any(oid == oferta_id for oid, _ in pendientes):
+            return
+
+        # Si el cliente ya está atendiendo otra oferta, esta espera su turno
+        if chat_id in oferta_activa:
+            pendientes.append((oferta_id, oferta_data))
+            print(f"[INFO] Oferta {oferta_id} en espera: el chat {chat_id} tiene otra oferta en curso.")
+            return
+
+        oferta_activa[chat_id] = oferta_id
+
+    enviar_oferta(oferta_id, oferta_data)
+
+def enviar_oferta(oferta_id, oferta_data):
+    if oferta_data.get("type") == "device":
+        send_device_offer(oferta_data)
+    else:
+        send_plan_offer(oferta_data)
+    print(f"[INFO] Oferta {oferta_id} enviada a Telegram. Pendiente de respuesta del cliente.")
+
+def finalizar_oferta(chat_id):
+    """
+    Se llama cuando el cliente rechaza la oferta al inicio, la cancela al final o
+    la acepta. Marca la oferta como procesada, limpia el estado de la conversación
+    y, si había más ofertas esperando para ese chat, envía la siguiente.
+    """
+    descripcionPedido.pop(chat_id, None)
+    pressed_buttons.pop(chat_id, None)
+
+    with lock_ofertas:
+        oferta_id = oferta_activa.pop(chat_id, None)
+        pendientes = ofertas_pendientes.get(chat_id)
+        siguiente = pendientes.popleft() if pendientes else None
+        if siguiente:
+            oferta_activa[chat_id] = siguiente[0]
+
+    if oferta_id:
         try:
-            tipo = oferta_data.get("type")
-            if tipo == "device":
-                OfferValidator.validate_device_offer(oferta_data)
-                send_device_offer(oferta_data)
-            elif tipo == "plan":
-                OfferValidator.validate_plan_offer(oferta_data) 
-                send_plan_offer(oferta_data)
-                
-            db.reference(f'ofertas/{oferta_id}').update({
-                "processed": True
-            })
-            print(f"[INFO] Oferta {oferta_id} enviada a Telegram y marcada como procesada.")
-            
-        except (ValueError, TypeError) as e:
-            print(f"[ERROR] Oferta {oferta_id} descartada. Motivo: {e}")
+            db.reference(f'ofertas/{oferta_id}').update({"processed": True})
+            print(f"[INFO] Oferta {oferta_id} finalizada por el cliente y marcada como procesada.")
+        except Exception as e:
+            print(f"[ERROR] No se pudo marcar la oferta {oferta_id} como procesada: {e}")
+
+    if siguiente:
+        enviar_oferta(*siguiente)
 
 #######################################################################################
 ################### Definición controladores de señales ###############################
