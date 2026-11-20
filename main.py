@@ -13,6 +13,7 @@ import signal
 import requests
 import json
 import threading
+import time
 from collections import deque
 
 # Gestión de ficheros
@@ -453,6 +454,10 @@ def procesar_y_marcar_oferta(oferta_id, oferta_data):
     if oferta_data.get("processed"):
         return
 
+    # MEDIDA (rama medidas): T2a de la latencia omnicanal. Momento en que el listener
+    # recibe la oferta desde la RTDB. Marca de tiempo Unix en ms (UTC).
+    print(f"[MEDIDA] T2a_oferta_recibida ts_ms={time.time_ns() // 1_000_000} oferta={oferta_id}", flush=True)
+
     tipo = oferta_data.get("type")
     try:
         if tipo == "device":
@@ -489,6 +494,9 @@ def enviar_oferta(oferta_id, oferta_data):
         send_device_offer(oferta_data)
     else:
         send_plan_offer(oferta_data)
+    # MEDIDA (rama medidas): T2b de la latencia omnicanal. Momento en que Telegram ha
+    # aceptado el último mensaje de la oferta. Marca de tiempo Unix en ms (UTC).
+    print(f"[MEDIDA] T2b_oferta_enviada_telegram ts_ms={time.time_ns() // 1_000_000} oferta={oferta_id}", flush=True)
     print(f"[INFO] Oferta {oferta_id} enviada a Telegram. Pendiente de respuesta del cliente.")
 
 def finalizar_oferta(chat_id):
